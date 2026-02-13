@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:alpine
+    container_name: inventory_db
+    ports:
+      - "${POSTGRES_PORT}:5432" #host:container
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # --- Redis ---
+  redis:
+    image: redis:alpine
+    container_name: inventory_cache
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+
+  # --- Redis Commander (GUI) ---
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: inventory_redis_gui
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "{REDIS_COMMANDER_PORT}:8081"
+    depends_on:
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
