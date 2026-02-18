@@ -4,7 +4,7 @@ dotenv.config();
 
 const isDev = process.env.NODE_ENV !== "production";
 
-export const errorHandler = (err, req, res, next) => {
+const errorHandler = (err, req, res, next) => {
     console.error("Error:", err);
 
     if (err.message === "Not allowed by CORS") {
