@@ -1,8 +1,5 @@
 import { pool } from "../config/db.js";
 import { redisClient } from "../config/redis.js";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 const checkHealthStatus = async () => {
     const health = {
