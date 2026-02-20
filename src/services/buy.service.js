@@ -4,7 +4,7 @@ const buyItem = async (userId,productId)=>{
     try{
 
         if (!productId) throw new Error("productId is required");
-        // if (!userId) throw new Error("userId is required");
+        if (!userId) throw new Error("userId is required");
 
         const product = await prisma.product.findUnique({
             where:{
@@ -12,7 +12,7 @@ const buyItem = async (userId,productId)=>{
             }
         })
 
-        if(!productId){
+        if(!product){
             throw new Error("Product not found");
         }
 
@@ -20,17 +20,26 @@ const buyItem = async (userId,productId)=>{
             throw new Error("Out of stock");
         }
 
-        const newStock = product.stock - 1;
+const [updatedProduct, placedOrder] = await prisma.$transaction([
+            prisma.product.update({
+                where: {
+                    id: productId
+                },
+                data: {
+                    stock: product.stock - 1
+                }
+            }),
+            prisma.order.create({
+                data: {
+                    id: randomUUID(),
+                    userId: userId,
+                    productId: productId,
+                    status: "CONFIRMED",
+                }
+            })
+        ]);
 
-        const updatedProduct = await prisma.product.update({
-            where:{
-                id: productId
-            },
-            data: {
-                stock: newStock
-            }
-        });
-        return updatedProduct;
+        return {updatedProduct, placedOrder};
     }
     catch(err){
         throw  err
