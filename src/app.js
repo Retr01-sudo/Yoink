@@ -7,6 +7,7 @@ import errorHandler from "./middleware/errorHandler.js";
 import dotenv from "dotenv";
 import { trackLatency } from "./middleware/metrics.middleware.js";
 import metricsRoute from "./routes/metrics.route.js";
+import buyRoute from "./routes/buy.route.js";
 
 dotenv.config();
 
@@ -29,6 +30,8 @@ app.options("/{*path}", cors(corsOptions));
 app.use("/metrics", metricsRoute)
 
 app.use("/health", healthRoute);
+
+app.use("/buy",buyRoute);
 
 app.use(errorHandler);
 
