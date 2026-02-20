@@ -1,0 +1,79 @@
+import { randomUUID } from "crypto";
+import { prisma } from "../src/config/db.js";
+
+
+const cleanup = async () => {
+    console.log("Cleaning up old data...");
+    try{
+        await prisma.order.deleteMany();
+        await prisma.product.deleteMany();
+        await prisma.user.deleteMany();
+        console.log("Cleanup done!");
+    }
+    catch(err){
+        throw err;
+    }
+};
+
+const addUsers = async (numberOfUsers) => {
+    try {
+        for (let i = 0; i < numberOfUsers; i++) {
+            await prisma.user.create({
+                data: {
+                    id: randomUUID(),
+                    name: `testUser${i + 1}`,
+                    email: `testuser${i + 1}@gmail.com`
+                }
+            });
+        }
+    }
+    catch (err) {
+        throw err;
+    }
+};
+
+const productNames = [
+    "Wireless Headphones", "Mechanical Keyboard", "USB-C Hub",
+    "Webcam HD", "Monitor Stand", "Mouse Pad XL",
+    "Laptop Stand", "LED Desk Lamp", "Portable Charger", "Bluetooth Speaker"
+];
+
+const addProducts = async (numberOfProducts) => {
+    try {
+        for (let i = 0; i < numberOfProducts; i++) {
+            await prisma.product.create({
+                data: {
+                    id: randomUUID(),
+                    name: productNames[i % productNames.length],
+                    price: parseFloat((Math.random() * 200 + 10).toFixed(2)), // $10 - $210
+                    stock: Math.floor(Math.random() * 20) + 1,               // 1  - 100
+                }
+            });
+        }
+    }
+    catch (err) {
+        throw err;
+    }
+};
+
+const seed = async () => {
+    try {
+        await cleanup();
+        const numberOfUsers=10;
+        console.log("Seeding users...");
+        await addUsers(numberOfUsers);
+        console.log("Users seeded successfully");
+
+        console.log("Seeding products...");
+        await addProducts(10);
+        console.log("Products seeded successfully");
+    }
+    catch (err) {
+        throw err;
+    }
+    finally {
+        await prisma.$disconnect();
+    }
+};
+
+seed();

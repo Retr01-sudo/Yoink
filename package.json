@@ -22,7 +22,8 @@
     "dev": "nodemon ./src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "migrate:dev": "npx prisma migrate dev",
-    "migrate:deploy": "npx prisma migrate"
+    "migrate:deploy": "npx prisma migrate",
+    "seed": "node ./scripts/seed.js"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
