@@ -8,7 +8,7 @@ class MetricsService {
 
 
         this.httpRequestDuration = new client.Histogram({
-            name: 'http_request_duration_seconds',
+            name: 'yoink_http_request_duration_seconds',
             help: 'Duration of HTTP requests in seconds',
             labelNames: ['method', 'route', 'status_code'],
             buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1, 2.5],
@@ -16,21 +16,21 @@ class MetricsService {
         });
 
         this.inventoryGauge = new client.Gauge({
-            name: 'inventory_stock_level',
+            name: 'yoink_inventory_stock_level',
             help: 'Current stock level of items',
             labelNames: ['product_id'],
             registers: [this.register]
         });
 
         this.orderCounter = new client.Counter({
-            name: 'total_orders',
+            name: 'yoink_total_orders',
             help: 'total number of orders processed',
             labelNames: ['status'],
             registers: [this.register]
         });
     }
 
-    async getMetricsContentType() {
+    getMetricsContentType() {
         return this.register.contentType;
     }
 
