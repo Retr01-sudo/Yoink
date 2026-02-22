@@ -2,6 +2,36 @@ name: yoink
 
 version: '3.8'
 services:
+
+  # --- Grafana ---
+  grafana:
+    image: grafana/grafana:latest
+    container_name: yoink_grafana
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASS}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # --- Prometheus ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: yoink_prometheus
+    ports:
+      - "${PROM_PORT}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-remote-write-receiver' # Required for k6 to push metrics
+    extra_hosts:
+      - "host.docker.internal:172.18.0.1"
+
   # --- PostgreSQL ---
   postgres:
     image: postgres:alpine
@@ -39,3 +69,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
