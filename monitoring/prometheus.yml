@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 1s
+  scrape_timeout: 1s
+  evaluation_interval: 1s
+
+scrape_configs:
+
+  # Prometheus scraping itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Uses host.docker.internal so Prometheus (inside Docker) can reach
+  - job_name: 'yoink_express'
+    static_configs:
+      - targets: ['host.docker.internal:3000']
+    metrics_path: '/metrics'  # Default endpoint exposed by prom-client
+
+  # PostgreSQL metrics — uncomment when you add postgres_exporter
+  # Requires: https://github.com/prometheus-community/postgres_exporter
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['localhost:9187']
+
+  # Redis metrics — uncomment when you add redis_exporter
+  # Requires: https://github.com/oliver006/redis_exporter
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['localhost:9121']
