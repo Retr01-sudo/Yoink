@@ -49,4 +49,4 @@ const buyItem = async (userId, productId) => {
     }
 };
 
-export const buyService = { buyItem };
+export const buyServiceNaive = { buyItem };
