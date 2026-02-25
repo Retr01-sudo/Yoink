@@ -1,3 +1,6 @@
+#data.json
+benchmarks/k6/data.json
+
 # Logs
 logs
 *.log
