@@ -8,6 +8,7 @@ import dotenv from "dotenv";
 import { trackLatency } from "./middleware/metrics.middleware.js";
 import metricsRoute from "./routes/metrics.route.js";
 import buyRoute from "./routes/v1_v2/buy.route.js";
+import buyRouteRedis from "./routes/v3/buy.route.js"
 
 dotenv.config();
 
@@ -32,6 +33,8 @@ app.use("/metrics", metricsRoute)
 app.use("/health", healthRoute);
 
 app.use("/api", buyRoute);
+
+app.use("/api/v3",buyRouteRedis);
 
 app.use(errorHandler);
 
