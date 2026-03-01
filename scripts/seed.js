@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { prisma } from "../src/config/db.js";
-import { fs } from "fs";
- 
+import  fs  from "fs";
+import path from "path";
+import { redisClient } from "../src/config/redis.js"; 
 
 const cleanup = async () => {
     console.log("Cleaning up old data...");
@@ -47,7 +48,8 @@ const addProducts = async (numberOfProducts) => {
                     id: randomUUID(),
                     name: productNames[i % productNames.length],
                     price: parseFloat((Math.random() * 200 + 10).toFixed(2)), // $10 - $210
-                    stock: Math.floor(Math.random() * 20) + 1,               // 1  - 100
+                    // stock: Math.floor(Math.random() * 20) + 1,               // 1  - 100
+                    stock: 1_00_00_000
                 }
             });
         }
@@ -60,7 +62,7 @@ const addProducts = async (numberOfProducts) => {
 const seed = async () => {
     try {
         await cleanup();
-        const numberOfUsers=500;
+        const numberOfUsers=3000;
         console.log("Seeding users...");
         await addUsers(numberOfUsers);
         console.log("Users seeded successfully");
@@ -111,6 +113,10 @@ const seed = async () => {
     }
     finally {
         await prisma.$disconnect();
+        if (redisClient) {
+            await redisClient.quit(); 
+        }
+        process.exit(0);
     }
 };
 
