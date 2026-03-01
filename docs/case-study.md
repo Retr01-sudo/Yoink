@@ -97,24 +97,77 @@ The k6 summary confirms the tradeoff: correctness achieved, but at significant l
 
 ## V3 (Initial): Redis + Lua
 
-*[Placeholder: Insert V3 Initial Architecture Diagram Image here. Flow: Client -> Node.js -> Redis (Lua decrement) -> IF success -> Synchronous Postgres Write]*
+<img width="2000" height="679" alt="V3 Initial Architecture: Client → Node.js → Redis (Lua atomic decrement) → if success → synchronous Postgres write" src="https://github.com/user-attachments/assets/1764419f-4e15-4557-a744-a649bb523acd" />
 
-**What I built:** Postgres was too slow to handle the initial spike, so I moved the inventory management strictly to Redis. I wrote a Lua script to atomically decrement the stock in memory. Redis is insanely fast and can process these decrements sequentially at around 10,000 operations per second. Once the Lua script succeeded, the service made a synchronous write to Postgres to finalize the order.
+**What I built:** Postgres was the bottleneck in V2, so I moved inventory management out of it entirely. Instead of asking Postgres to coordinate concurrent decrements under load, I wrote a Lua script that atomically decrements the stock counter directly in Redis. Redis processes operations sequentially on a single thread — no race conditions, no lock contention, around 10,000 ops/second. Once the Lua script confirmed a successful decrement, the service made a synchronous write to Postgres to persist the order record.
 
-**What broke:** I performed a preliminary check with a small load (less than 100 VUs). There was no problem, and latency dropped beautifully below 100ms. I thought I had cracked it. Then I increased the load to 1,000 VUs and the server instantly started throwing massive 500 errors. 
+The split of responsibilities: Redis owns the fast, conflict-free inventory check. Postgres just stores the receipts.
 
-Prisma was screaming with a `P2037` error:
+**A false sense of success**
+
+My first serious test was 1,000 VUs against a flash sale with scarce stock — a few thousand units. It *worked*. No 500s, clean error rates, latency well below 500ms. I thought I'd finally solved it.
+
+But there was a hidden reason it worked, and it had nothing to do with the architecture being correct. When stock ran out, the Lua script returned early and the server sent a 404 *without ever touching Postgres*. With scarce stock, the vast majority of requests hit the out-of-stock path and bypassed the database entirely — so the connection pool never got overwhelmed. The test looked healthy because most traffic never reached the bottleneck.
+
+**What actually broke**
+
+As soon as I bumped inventory to 10,000,000 units — enough that a large proportion of requests would succeed and each need a DB write — the system fell apart. Prisma started throwing `P2037`:
+
 ```text
 Too many database connections opened: sorry, too many clients already
 ```
-Because the requests cleared Redis so fast, all 1,000 requests tried to open a Prisma database connection simultaneously to write the order.
 
-**The Bug I'm Most Proud Of Finding:** 
-The database crash wasn't the biggest problem—it was the silent data divergence it caused. When I ran the benchmark with 10k stock and 1,000 concurrent users (`[Insert k6 reqs/s from Web Dashboard here]`), my Grafana "Current Inventory Stock" showed 0. But when I ran `SELECT count(*) FROM "Order";` in DBeaver, I only had `[Insert DBeaver Order count here]` orders. 
+Redis was clearing the inventory check so fast that all 1,000 requests arrived at the Postgres write simultaneously. The connection pool had nowhere near enough capacity, and the server flooded with 500s — ironically *because* Redis was too fast.
 
-There were `[Insert number of missing units/divergence here]` units missing. Because it was an optimistic decrement with no DB write guarantee, those missing units decremented in Redis, failed at the Postgres connection bottleneck, and were permanently lost from the sale. 
+**The bug I'm most proud of finding**
 
-**What I learned:** A fast system that loses data silently is worse than a slow system that doesn't.
+The 500 errors were embarrassing, but they weren't the real problem. The real problem was what the crash *caused silently*.
+
+Here's the database going into the test — 10,000,000 units of stock:
+
+<img width="951" height="216" alt="Database before V3 initial test: 10,000,000 stock" src="https://github.com/user-attachments/assets/53f5ee52-e519-4231-9002-5c8b7702d57f" />
+
+After the test finished, I checked two things. The Redis stock counter read `9,967,138` — meaning Redis believed **32,862 units** had been sold. Then I ran:
+
+```sql
+SELECT count(*) FROM "Order";
+```
+
+Postgres had only recorded **26,261 orders**. Redis said 32,862 sales. Postgres only knew about 26,261 of them.
+
+**6,601 units were sold, decremented, and permanently unrecorded.**
+
+Here's exactly what happened: the Lua script decremented Redis first — that always succeeded instantly. Then the handler attempted the Postgres write. When the connection pool was exhausted, that write threw an error and returned a 500 to the client. But the Redis decrement had *already happened* with no rollback and no retry queued. The stock was gone from Redis. The order record was never created. From the customer's perspective their purchase failed. From the inventory's perspective, the unit was sold.
+
+| | Units sold (Redis) | Orders recorded (Postgres) |
+|---|---|---|
+| Expected | 32,862 | 32,862 |
+| Actual | 32,862 | 26,261 |
+| **Divergence** | — | **6,601 permanently lost** |
+
+The error rate graph shows exactly when Postgres started buckling — each spike is a batch of writes that failed after Redis had already committed the corresponding decrements:
+
+<img width="1858" height="901" alt="Grafana: 500 error rate during V3 initial — each spike is Postgres writes failing after Redis already decremented stock, with no compensation" src="https://github.com/user-attachments/assets/65fe4db4-d6c5-46c6-897d-d98677d01595" />
+
+While those writes were failing, requests were blocking on a DB connection that would never arrive — which shows up as p95 latency climbing in lockstep with the error spikes:
+
+<img width="1864" height="910" alt="Grafana: p95 latency during V3 initial — rises alongside 500 errors as threads pile up waiting on Postgres connections that are exhausted" src="https://github.com/user-attachments/assets/dd121b00-bcc6-421a-901c-319b9b4ed360" />
+
+After the test, the database tells the whole story. Redis at `9,967,138`, Postgres with records for only `26,261` orders — 6,601 units decremented in Redis with no trace anywhere in the order table:
+
+<img width="950" height="220" alt="Database after V3 initial: Redis stock = 9,967,138 but Postgres only has 26,261 orders — 6,601 units consumed but never recorded" src="https://github.com/user-attachments/assets/16a1ac27-9d80-487f-8804-4877130d0d0f" />
+
+The full k6 summary shows the error rate that produced this divergence. These weren't just failed requests — each 500 here is an inventory unit that was consumed and silently discarded:
+
+<img width="1892" height="1142" alt="k6 test results for V3 initial: significant error rate under 1000 VU load with abundant stock — each error is a permanently lost order record" src="https://github.com/user-attachments/assets/35cf652d-4a5b-447e-9bb8-7e1110e844f8" />
+
+This is what made V3 Initial dangerous rather than just broken. It passed my initial tests because scarce stock masked the bottleneck. It only failed when the conditions changed. A system that silently loses data under specific load conditions is far harder to catch than one that crashes outright — and far more damaging if it ever reaches production.
+
+The root cause was architectural: I coupled a fast, non-blocking operation (Redis decrement) directly to a slow, failure-prone one (Postgres write) in the same synchronous request cycle. If the slow step failed, there was no way back. That's what needed to change.
+
+**What I learned:** A fast system that loses data silently is worse than a slow system that doesn't. And a system that only works under the right conditions isn't a working system — it's a bug waiting for the conditions to change.
+
+---
 
 ## V3 (Improved): Redis + BullMQ Message Queue
 
