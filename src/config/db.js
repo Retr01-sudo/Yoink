@@ -5,7 +5,11 @@ import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    min: 2,
+    max: 33
+});
 
 const adapter = new PrismaPg(pool);
 
