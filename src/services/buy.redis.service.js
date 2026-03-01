@@ -64,47 +64,21 @@ const buyItem = async (userId, productId) => {
             }
         }
 
-        if (redisResult === -1) {
-            const { updatedProduct, placedOrder } = await prisma.$transaction(async (tx) => {
-                const result = await tx.product.updateMany({
-                    where: { 
-                        id: productId, 
-                        stock: {gte: 1}
-                    },
-                    data: {
-                        stock:{ decrement: 1 }
-                    }
-                });
-
-                if (result.count===0) {
-                    throw createError(400, "Out of Stock");
-                }
-
-                const o = await tx.order.create({
-                    data: {
-                        userId,
-                        productId, 
-                        status: 'CONFIRMED'
-                    }
-                });
-
-                const p = await prisma.product.findUnique({
-                    where: {
-                        id: productId,
-                    }
-                })
-
-                return { updatedProduct: p, placedOrder: o };
+if (redisResult === -1) {
+            const product = await prisma.product.findUnique({ 
+                where: { id: productId } 
             });
 
-            await redisClient.set(key, updatedProduct.stock, { EX: DEFAULT_TTL });
-            
-            metricsService.orderCounter.inc({ status: 'CONFIRMED' });
-            
-            return { 
-                updatedProduct, 
-                placedOrder 
-            };
+            if (!product || product.stock <= 0) {
+                throw createError(400, "Out of Stock");
+            }
+
+            await redisClient.set(key, product.stock, { 
+                NX: true, 
+                EX: DEFAULT_TTL 
+            });
+
+            return await buyItem(userId, productId);
         }
 
     } catch (err) {
