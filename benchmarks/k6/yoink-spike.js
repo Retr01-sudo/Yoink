@@ -23,20 +23,29 @@ const yoinkLatency = new Trend('k6_yoink_req_duration'); // Outside view of late
 export const options = {
     scenarios: {
         flash_sale_spike: {
-            executor: 'ramping-vus',
-            startVUs: 0,
+            executor: 'ramping-arrival-rate',
+
+            // requests per second
+            startRate: 50,
+            timeUnit: '1s',
+
+            // controls how many VUs k6 can allocate dynamically
+            preAllocatedVUs: 200,
+            maxVUs: 2000,
+
             stages: [
-                { duration: '2s', target: 700 },  // Instant explosion to 500 users
-                { duration: '30s', target: 1000 }, // Hold the peak chaos
-                { duration: '3s', target: 0 },    // Quick cool down
+                { target: 300, duration: '5s' },   // explosive ramp
+                { target: 1000, duration: '10s' }, // flash-sale spike
+                { target: 1000, duration: '30s' }, // sustained chaos
+                { target: 100, duration: '5s' },   // taper down
+                { target: 0, duration: '5s' },     // cooldown
             ],
-            gracefulRampDown: '3s',
         },
     },
-    // Fail the entire test if these thresholds are breached
+
     thresholds: {
-        'http_req_failed': ['rate<0.01'], // Less than 1% of requests should be 500/502/504s
-        'k6_yoink_req_duration': ['p(95)<500'], // 95% of requests should complete in under 500ms
+        'http_req_failed': ['rate<0.01'],
+        'k6_yoink_req_duration': ['p(95)<500'],
     },
 };
 
@@ -62,7 +71,7 @@ export default function () {
     };
 
     // The precise moment the user tries to grab the item
-    const res = http.post('http://localhost:3000/buy', payload, params);
+    const res = http.post('http://localhost:3000/api/v3/buy', payload, params);
 
     // Track the client-side latency
     yoinkLatency.add(res.timings.duration);
