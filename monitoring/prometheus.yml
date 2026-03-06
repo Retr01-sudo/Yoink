@@ -14,7 +14,17 @@ scrape_configs:
   - job_name: 'yoink_express'
     static_configs:
       - targets: ['host.docker.internal:3000']
-    metrics_path: '/metrics'  # Default endpoint exposed by prom-client
+    metrics_path: '/metrics'
+
+  - job_name: 'yoink_worker'
+    static_configs:
+      - targets: ['host.docker.internal:3002']
+    metrics_path: '/metrics'
+
+  - job_name: 'yoink_dlq_worker'
+    static_configs:
+      - targets: ['host.docker.internal:3003']
+    metrics_path: '/metrics'
 
   # PostgreSQL metrics — uncomment when you add postgres_exporter
   # Requires: https://github.com/prometheus-community/postgres_exporter
