@@ -2,13 +2,14 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { helmetOptions, corsOptions } from "./config/security.js";
-import healthRoute from "./routes/health.route.js";
+import healthRouter from "./routes/health.route.js";
 import errorHandler from "./middleware/errorHandler.js";
 import dotenv from "dotenv";
 import { trackLatency } from "./middleware/metrics.middleware.js";
-import metricsRoute from "./routes/metrics.route.js";
-import buyRoute from "./routes/v1_v2/buy.route.js";
-import buyRouteRedis from "./routes/v3/buy.route.js"
+import metricsRouter from "./routes/metrics.route.js";
+import buyRouterV1V2 from "./routes/v1_v2/buy.route.js";
+import buyRouterV3 from "./routes/v3/buy.route.js";
+import buyRouterV4 from "./routes/v4/buy.route.js";
 
 dotenv.config();
 
@@ -28,13 +29,15 @@ app.use(cors(corsOptions));
 
 app.options("/{*path}", cors(corsOptions));
 
-app.use("/metrics", metricsRoute)
+app.use("/metrics", metricsRouter);
 
-app.use("/health", healthRoute);
+app.use("/health", healthRouter);
 
-app.use("/api", buyRoute);
+app.use("/api", buyRouterV1V2);
 
-app.use("/api/v3",buyRouteRedis);
+app.use("/api/v3", buyRouterV3);
+
+app.use("/api/v4", buyRouterV4);
 
 app.use(errorHandler);
 
