@@ -38,7 +38,7 @@ This project was built to reproduce this failure in a controlled environment, me
 
 ## 🏗️ Architecture Overview
 
-The system evolved through three architectural generations, ultimately resulting in the highly resilient, event-driven design below.
+The system evolved through four architectural generations, ultimately resulting in the highly resilient, event-driven design below.
 
 ```text
                (Incoming Requests)
@@ -82,7 +82,7 @@ The system evolved through three architectural generations, ultimately resulting
 
 * **Concurrency Control:** Solves the classic read-modify-write race condition using Redis as an atomic counter via a single-operation Lua script.
 * **High Throughput:** The Redis + Lua layer decouples the hot path from slow PostgreSQL write latency, processing ~10,000 inventory decrements per second.
-* **Asynchronous Processing:** Successful inventory claims are buffered as jobs in a BullMQ queue. Workers drain this queue at a controlled concurrency limit, entirely protecting the database from connection pool exhaustion (`P2037` errors).
+* **Asynchronous Processing:** Successful inventory claims are buffered as jobs in a BullMQ queue. Workers drain this queue at a controlled concurrency limit, entirely protecting the database from connection pool exhaustion (`P2028` errors).
 * **Fault Tolerance & DLQ:** Implements a Dead Letter Queue pattern to prevent "ghost reservations." If a database write permanently fails, a DLQ worker issues a compensating Redis increment to restore the stock.
 * **Full Observability:** Prometheus scrapes custom metrics (queue depth, Redis ops/s, HTTP latency), visualized on real-time Grafana dashboards.
 
@@ -109,14 +109,19 @@ The system evolved through three architectural generations, ultimately resulting
 yoink/
 ├── benchmarks/k6/        # k6 flash sale load test scripts
 ├── docs/                 # Full engineering case study
+├── lua/                  # Atomic inventory decrement Lua script
+├── monitoring/           # Prometheus configuration
 ├── prisma/               # Database schema & migrations
 ├── scripts/              # Database seeder (products, stock)
 ├── src/
-│   ├── config/           # Redis and Prisma client singletons
-│   ├── jobs/             # BullMQ order worker and DLQ worker
-│   ├── lua/              # Atomic inventory decrement script
-│   ├── routes/           # Express controllers (products, orders)
-│   └── app.js            # Express app entry point
+│   ├── config/           # Redis, Prisma, and security configs
+│   ├── controllers/      # V1-V4 buy logic implementations
+│   ├── middleware/       # Error handling & Prometheus metrics
+│   ├── queues/workers/   # BullMQ order worker and DLQ worker
+│   ├── routes/           # Versioned API routes (v1_v2, v3, v4)
+│   ├── services/         # Business logic for inventory strategies
+│   ├── app.js            # Express app configuration
+│   └── server.js         # Entry point
 └── docker-compose.yml    # Infrastructure orchestration
 ```
 
@@ -162,28 +167,36 @@ npm run dev
 
 The API will be available at `http://localhost:3000`.
 
+### 4. Start Workers (Required for V4)
+
+The V4 architecture requires background workers to process the BullMQ queue:
+
+```bash
+# Start the Place Order Worker (processes orders from BullMQ → Postgres)
+npm run dev:worker
+
+# Start the DLQ Rollback Worker (rolls back failed orders in Redis)
+npm run dev:dlqworker
+```
+
 ---
 
 ## 📡 API Reference
 
-### `GET /products`
+Each architecture version has its own buy endpoint:
 
-Returns a list of all seeded products with their current stock levels.
+| Version | Endpoint | Strategy |
+| --- | --- | --- |
+| V1 | `POST /api/v1/buy` | Read-Modify-Write (broken under load) |
+| V2 | `POST /api/v2/buy` | Atomic `WHERE stock >= 1` |
+| V3 | `POST /api/v3/buy` | Redis Lua + Sync Postgres write |
+| **V4** | **`POST /api/v4/buy`** | **Redis Lua + BullMQ async pipeline** |
 
-```json
-[
-  {
-    "id": "clx1...",
-    "name": "Limited Edition Sneaker",
-    "price": 199.99,
-    "stock": 500
-  }
-]
-```
-
-### `POST /orders`
+### `POST /api/v4/buy` (Production)
 
 **The Hot Path.** Attempts to purchase one unit. Executes the atomic Redis Lua script and enqueues a BullMQ job.
+
+**Request Body:**
 
 ```json
 {
@@ -192,9 +205,8 @@ Returns a list of all seeded products with their current stock levels.
 }
 ```
 
-* **202 Accepted:** Inventory claimed in Redis. Order job enqueued.
-* **409 Conflict:** Stock exhausted. Purchase rejected.
-* **429 Too Many Requests:** Rate limit exceeded.
+* **202 Accepted:** Inventory claimed in Redis. Order job enqueued for async processing.
+* **400 Bad Request:** Out of stock, or missing `userId` / `productId`.
 
 ---
 
@@ -218,7 +230,7 @@ Navigate to `http://localhost:3001` (Credentials: `admin` / `admin`). Watch the 
 The core concurrency solution is a Lua script executed in Redis. Because Redis is single-threaded, the script evaluates atomically. No two concurrent requests can interleave and read `stock = 1` simultaneously.
 
 ```lua
--- src/lua/decrement.lua
+-- lua/decrementScript.lua
 local stock = tonumber(redis.call('GET', KEYS[1]))
 
 if stock == nil then
@@ -266,15 +278,18 @@ If the database write fails, we must ensure the item isn't permanently lost from
 
 ## 📈 Benchmarks
 
-Results from a representative k6 spike run (1,000 VUs, 30s ramp-up, 60s peak) comparing the initial naive approach to the final architecture:
+Results from representative k6 spike tests (1,000 VUs, 30s ramp-up) across all four architectural generations. All values sourced from k6 summaries and Grafana dashboards — see the [full case study](./docs/case-study.md) for detailed analysis.
 
-| Metric | Naive CRUD (V1) | Redis + BullMQ (Final) |
-| --- | --- | --- |
-| **Oversell events** | ~3,400 units | **0** |
-| **P95 latency** | 1,240 ms | **48 ms** |
-| **Throughput (peak)** | ~310 req/s | **~9,800 req/s** |
-| **DB connection errors** | Frequent (`P2037`) | **None** |
-| **5xx error rate** | 18% | **< 0.1%** |
+| Metric | V1 — Naive CRUD | V2 — Atomic DB | V3 — Redis + Lua (Sync) | V4 — Redis + BullMQ |
+| --- | --- | --- | --- | --- |
+| **Inventory Integrity** | ❌ ~23,486 oversold | ✅ 0 oversold | ⚠️ 6,601 ghost reservations | ✅ 0 — perfect sync |
+| **P95 Latency** | 3,600 ms | 1,390 ms | 2,110 ms | **7.62 ms** (5k stock) / **36.7 ms** (10M stock) |
+| **Throughput¹** | ~516 req/s | — | — | ~719 req/s (5k) / ~1,459 req/s (10M) |
+| **DB Connection Errors** | `P2028` pool exhaustion | `P2028` under contention | `P2028` flood at scale | **None** |
+| **5xx Error Rate** | ~0.92% | — | Significant at high stock | **0%** |
+| **Self-Healing (DLQ)** | ❌ | ❌ | ❌ | ✅ Tested under DB outage |
+
+> ¹ Throughput values are Prometheus `rate()` averages over the scrape interval, not instantaneous peaks. Actual k6 burst peaks were higher (e.g., 1,000 req/s averaged to ~580 req/s in Grafana).
 
 ---
 
